@@ -1,6 +1,4 @@
 """
-houseexpo_loader.py — Загрузчик реальных планировок из датасета HouseExpo.
-
 Формат HouseExpo JSON (один файл = одна квартира):
 {
   "id": "0a1b2c3d",
@@ -15,13 +13,6 @@ houseexpo_loader.py — Загрузчик реальных планировок
       ...
   }
 }
-
-ВАЖНО: авторы датасета и другие исследователи отмечают, что поле room_category
-неточное — типы комнат могут отсутствовать или быть неправильными.
-Поэтому загрузчик применяет несколько уровней защиты:
-  1. Прямое использование room_category если тип есть
-  2. Эвристика по площади bbox для "угадывания" типа
-  3. Отбраковка планировок без минимального набора комнат
 
 Pipeline:
   load_houseexpo_json(path)  →  raw dict
@@ -38,7 +29,7 @@ import glob
 from typing import Dict, List, Optional, Tuple
 
 
-# ─── Маппинг SUNCG/HouseExpo типов → наши типы ───────────────────────────────
+# Маппинг SUNCG/HouseExpo типов
 # HouseExpo наследует типы из SUNCG. Ниже все известные варианты написания.
 ROOM_TYPE_MAP = {
     # Спальни
@@ -63,7 +54,7 @@ ROOM_TYPE_MAP = {
     "restroom":         "Bathroom",
     "wc":               "Bathroom",
     "powder room":      "Bathroom",
-    "laundry room":     "Bathroom",      # часто рядом с ванной
+    "laundry room":     "Bathroom",      
 
     # Гостиная
     "living room":      "LivingRoom",
@@ -105,7 +96,7 @@ ROOM_TYPE_MAP = {
 # Минимальный набор типов комнат для валидной планировки
 REQUIRED_TYPES = {"MasterRoom", "Kitchen", "Bathroom"}
 
-# Типы, которые важны для симуляции (остальные игнорируем)
+# Типы, которые важны для симуляции
 USEFUL_TYPES = {
     "MasterRoom", "SecondRoom", "Kitchen", "Bathroom",
     "LivingRoom", "StudyRoom", "Entrance", "BalCony", "Storage"
@@ -127,7 +118,7 @@ def _guess_type_by_area(area_m2: float, room_idx: int, total_rooms: int) -> str:
         return "LivingRoom"
 
 
-# ─── Парсинг одного JSON-файла ────────────────────────────────────────────────
+# Парсинг одного JSON-файла
 
 def load_houseexpo_json(filepath: str) -> Optional[dict]:
     """Загружает и возвращает сырой dict из JSON-файла HouseExpo."""
@@ -135,7 +126,6 @@ def load_houseexpo_json(filepath: str) -> Optional[dict]:
         with open(filepath, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, IOError) as e:
-        print(f"  [warn] Не удалось прочитать {filepath}: {e}")
         return None
 
 
@@ -173,10 +163,8 @@ def extract_rooms(raw: dict) -> List[dict]:
     total_rooms = sum(len(v) for v in room_category.values())
 
     for raw_type, bboxes in room_category.items():
-        # Нормализуем тип
         normalized = ROOM_TYPE_MAP.get(raw_type.lower().strip())
 
-        # Если тип не в словаре — пробуем частичное совпадение
         if normalized is None:
             for key, val in ROOM_TYPE_MAP.items():
                 if key in raw_type.lower():
@@ -186,18 +174,14 @@ def extract_rooms(raw: dict) -> List[dict]:
         for i, bbox in enumerate(bboxes):
             centroid, area = _bbox_to_centroid_and_area(bbox)
 
-            # Если тип всё ещё неизвестен — используем эвристику
             if normalized is None:
                 normalized = _guess_type_by_area(area, room_idx, total_rooms)
 
-            # Пропускаем комнаты вне полезного набора
             if normalized not in USEFUL_TYPES:
                 room_idx += 1
                 continue
 
-            # Уникальный ID: тип + порядковый номер среди комнат данного типа
             suffix = "" if len(bboxes) == 1 else f"_{i+1}"
-            # Для второй спальни меняем тип
             if normalized == "MasterRoom" and i > 0:
                 normalized = "SecondRoom"
 
@@ -229,12 +213,10 @@ def build_adjacency(rooms: List[dict], gap_threshold: float = 1.5) -> List[Tuple
         for j in range(i + 1, n):
             ra, rb = rooms[i], rooms[j]
 
-            # Расстояние между центроидами
             dx = ra["centroid"][0] - rb["centroid"][0]
             dy = ra["centroid"][1] - rb["centroid"][1]
             dist = math.sqrt(dx * dx + dy * dy)
 
-            # Проверяем proximity bbox'ов
             def get_bbox_flat(room):
                 b = room["bbox"]
                 if isinstance(b[0], (list, tuple)):
@@ -244,11 +226,9 @@ def build_adjacency(rooms: List[dict], gap_threshold: float = 1.5) -> List[Tuple
             ax1, ay1, ax2, ay2 = get_bbox_flat(ra)
             bx1, by1, bx2, by2 = get_bbox_flat(rb)
 
-            # Зазор по X и Y
             gap_x = max(0, max(ax1, bx1) - min(ax2, bx2))
             gap_y = max(0, max(ay1, by1) - min(ay2, by2))
 
-            # Комнаты смежны если зазор меньше порога
             if gap_x <= gap_threshold and gap_y <= gap_threshold:
                 edges.append((ra["id"], rb["id"], round(dist, 3)))
 
@@ -257,7 +237,7 @@ def build_adjacency(rooms: List[dict], gap_threshold: float = 1.5) -> List[Tuple
 
 def to_floorplan(raw: dict, filepath: str) -> Optional[dict]:
     """
-    Конвертирует сырой HouseExpo dict → формат нашего симулятора.
+    Конвертирует сырой HouseExpo dict.
     Возвращает None если планировка не прошла валидацию.
     """
     house_id = raw.get("id", os.path.splitext(os.path.basename(filepath))[0])
@@ -266,17 +246,15 @@ def to_floorplan(raw: dict, filepath: str) -> Optional[dict]:
     if not rooms_list:
         return None
 
-    # Проверяем наличие минимально необходимых типов
     found_types = {r["type"] for r in rooms_list}
     missing = REQUIRED_TYPES - found_types
     if missing:
-        return None  # Не хватает спальни / кухни / ванной
+        return None 
 
     edges = build_adjacency(rooms_list)
     if len(edges) < 2:
-        return None  # Граф слишком разрозненный
+        return None
 
-    # Формируем rooms dict в нашем формате
     rooms_dict = {}
     for r in rooms_list:
         rooms_dict[r["id"]] = {
@@ -285,7 +263,6 @@ def to_floorplan(raw: dict, filepath: str) -> Optional[dict]:
             "centroid": r["centroid"],
         }
 
-    # Краткое описание
     type_counts = {}
     for r in rooms_list:
         type_counts[r["type"]] = type_counts.get(r["type"], 0) + 1
@@ -308,7 +285,7 @@ def to_floorplan(raw: dict, filepath: str) -> Optional[dict]:
     }
 
 
-# ─── Загрузка датасета ────────────────────────────────────────────────────────
+# Загрузка датасета
 
 def load_dataset(
     json_dir: str,
@@ -322,9 +299,9 @@ def load_dataset(
 
     Параметры:
       json_dir  — путь к папке ./HouseExpo/json/
-      n         — сколько планировок нужно (для ТЗ: 5-7)
-      min_rooms — минимум комнат (отсеиваем совсем маленькие)
-      max_rooms — максимум комнат (отсеиваем огромные дома)
+      n         — сколько планировок нужно
+      min_rooms — минимум комнат (отсеиваеn совсем маленькие)
+      max_rooms — максимум комнат (отсеиваеn огромные дома)
       verbose   — печатать прогресс
 
     Возвращает dict {floorplan_id: floorplan_dict}
@@ -335,18 +312,15 @@ def load_dataset(
     if not all_files:
         raise FileNotFoundError(
             f"JSON-файлы не найдены в '{json_dir}'.\n"
-            f"Убедись что путь верный. Ожидается структура:\n"
             f"  HouseExpo/\n"
             f"    json/\n"
             f"      0a1b2c3d.json\n"
             f"      ...\n"
-            f"Скачай датасет: git clone https://github.com/TeaganLi/HouseExpo"
         )
 
     if verbose:
         print(f"Найдено JSON-файлов: {len(all_files)}")
-        print(f"Ищем {n} планировок с {min_rooms}–{max_rooms} комнатами...\n")
-
+      
     floorplans = {}
     checked = 0
     skipped_reasons = {"no_file": 0, "parse_error": 0, "missing_rooms": 0,
@@ -394,12 +368,11 @@ def load_dataset(
 
     if len(floorplans) < n:
         print(f"\n[!] Удалось загрузить только {len(floorplans)} из {n} запрошенных планировок.")
-        print(f"    Попробуй уменьшить min_rooms или увеличить max_rooms.")
 
     return floorplans
 
 
-# ─── Быстрая проверка одного файла ───────────────────────────────────────────
+# Быстрая проверка одного файла
 
 def inspect_json(filepath: str) -> None:
     """Печатает структуру одного JSON-файла HouseExpo — для отладки."""
