@@ -1,11 +1,9 @@
 """
-agents.py — Agent definitions and daily scenario schedules.
-
-Each agent has:
+У каждого агента есть:
   - name, description
-  - daily_schedule: ordered list of (from_room_type, to_room_type, label) trips
-  - friction_weights: parameters for Friction Score calculation
-  - speed_factor: multiplier for effective distance (>1 = slower / more costly)
+  - daily_schedule: список (from_room_type, to_room_type, label) маршрутов
+  - friction_weights: параметра для расчета Friction Score
+  - speed_factor: множитель для более эффективных маршрутов (>1 = медленнее / дороже)
 """
 
 from dataclasses import dataclass, field
@@ -16,16 +14,15 @@ from typing import List, Tuple
 class AgentConfig:
     name: str
     description: str
-    # Each trip: (from_room_type, to_room_type, activity_label)
+    # Маршруты: (from_room_type, to_room_type, activity_label)
     daily_schedule: List[Tuple[str, str, str]]
-    speed_factor: float = 1.0          # >1 means movement is more costly
-    long_path_penalty_threshold: float = 6.0   # distance above which penalty kicks in
-    long_path_penalty_multiplier: float = 1.0  # extra multiplier for long paths
-    transition_penalty: float = 0.0    # per-transition penalty added to friction
+    speed_factor: float = 1.0  
+    long_path_penalty_threshold: float = 6.0 
+    long_path_penalty_multiplier: float = 1.0  
+    transition_penalty: float = 0.0   
 
 
-# ─── Canonical room-type aliases ──────────────────────────────────────────────
-# Maps human-readable activity targets → RPLAN room type keys
+# Канонические названия типов помещений
 ROOM_TYPE_ALIASES = {
     "bedroom":    ["MasterRoom", "SecondRoom", "StudyRoom"],
     "kitchen":    ["Kitchen"],
@@ -37,48 +34,48 @@ ROOM_TYPE_ALIASES = {
 }
 
 
-# ─── Agent 1: Elderly person (70+) ────────────────────────────────────────────
+# Агент 1: Пожилой человек (70+)
 ELDERLY = AgentConfig(
     name="Elderly (70+)",
     description=(
-        "Moves slowly, penalised by long routes and many transitions. "
-        "Needs bathroom access that doesn't require passing through many rooms."
+        "Движения медленные, что является недостатком, если маршрут длинный и с большим количеством переходов. "
+        "Необходимо наличие доступа к ванной комнате, не требующего прохождения через множество комнат."
     ),
     daily_schedule=[
-        # Morning
+        # Утро
         ("MasterRoom",  "Kitchen",    "breakfast"),
         ("Kitchen",     "Bathroom",   "morning hygiene"),
-        # Mid-day
+        # Полдень
         ("Bathroom",    "LivingRoom", "rest / TV"),
         ("LivingRoom",  "Kitchen",    "lunch"),
         ("Kitchen",     "LivingRoom", "post-lunch rest"),
-        # Afternoon outing
+        # Послеобеденный выход
         ("LivingRoom",  "Entrance",   "leave apartment"),
         ("Entrance",    "LivingRoom", "return home"),
-        # Evening
+        # Вечер
         ("LivingRoom",  "Bathroom",   "evening hygiene"),
         ("Bathroom",    "MasterRoom", "go to bed"),
     ],
-    speed_factor=1.5,                  # every step costs 1.5× more
-    long_path_penalty_threshold=5.0,   # more sensitive to long paths
-    long_path_penalty_multiplier=2.0,  # strong penalty for long paths
-    transition_penalty=0.5,            # each transition costs extra
+    speed_factor=1.5,                  
+    long_path_penalty_threshold=5.0,   
+    long_path_penalty_multiplier=2.0,  
+    transition_penalty=0.5,            
 )
 
 
-# ─── Agent 2: Young couple ─────────────────────────────────────────────────────
-# Two agents share the flat; we track them separately and flag simultaneous
-# access conflicts on single-access rooms (Bathroom, Kitchen).
+# Агент 2: Молодая пара
+# В квартире проживают два агента; отслеживаем их действия по отдельности и отмечаем одновременные действия.
+# Конфликты доступа в помещениях с одним входом (ванная комната, кухня).
 
 COUPLE_A = AgentConfig(
-    name="Couple — Partner A",
-    description="Part of young couple. Morning rush, shared spaces create conflicts.",
+    name="Пара — Партнер 1",
+    description="Утренняя спешка, общие пространства создают конфликты.",
     daily_schedule=[
-        # Morning rush
+        # Утренняя спешка
         ("MasterRoom",  "Bathroom",   "morning shower"),
         ("Bathroom",    "Kitchen",    "breakfast prep"),
         ("Kitchen",     "Entrance",   "leave for work"),
-        # Evening
+        # Вечер
         ("Entrance",    "Kitchen",    "cooking together"),
         ("Kitchen",     "LivingRoom", "dinner & relax"),
         ("LivingRoom",  "Bathroom",   "evening hygiene"),
@@ -88,14 +85,14 @@ COUPLE_A = AgentConfig(
 )
 
 COUPLE_B = AgentConfig(
-    name="Couple — Partner B",
-    description="Part of young couple. Slightly offset morning schedule.",
+    name="Пара — Партнер 2",
+    description="Немного смещенное утреннее расписание.",
     daily_schedule=[
-        # Morning rush — offset by one step
+        # Утренняя спешка — компенсируется одним шагом
         ("MasterRoom",  "Kitchen",    "quick breakfast"),
         ("Kitchen",     "Bathroom",   "morning hygiene"),
         ("Bathroom",    "Entrance",   "leave for work"),
-        # Evening (arrives slightly later)
+        # Вечер (прибытие немного позже)
         ("Entrance",    "LivingRoom", "decompress"),
         ("LivingRoom",  "Kitchen",    "cooking together"),
         ("Kitchen",     "Bathroom",   "evening hygiene"),
@@ -104,23 +101,23 @@ COUPLE_B = AgentConfig(
     speed_factor=1.0,
 )
 
-# Rooms where simultaneous occupancy causes a conflict/wait
+# Комнаты, где одновременное нахождение приводит к конфликту/ожиданию
 CONFLICT_ROOMS = {"Bathroom", "Kitchen"}
 
 
-# ─── Agent 3: Remote-working bachelor ─────────────────────────────────────────
+#  Агент 3: Холостяк, работающий удаленно
 BACHELOR = AgentConfig(
     name="Remote-worker Bachelor",
     description=(
-        "Works from home. Makes many short trips: study↔kitchen and study↔bathroom. "
-        "Cares most about proximity of study to kitchen and bathroom."
+        "Работает из дома. Совершает много коротких переходов: кабинет ↔ кухня и кабинет ↔ ванная комната. "
+        "Для него наиболее важен близость кабинета к кухне и ванной комнате."
     ),
     daily_schedule=[
-        # Morning
+        # Утро
         ("MasterRoom",  "Bathroom",   "morning shower"),
         ("Bathroom",    "Kitchen",    "breakfast"),
         ("Kitchen",     "StudyRoom",  "start work"),
-        # Work day — multiple micro-trips
+        # Рабочий день - много коротких передвижений 
         ("StudyRoom",   "Kitchen",    "coffee break 1"),
         ("Kitchen",     "StudyRoom",  "back to work 1"),
         ("StudyRoom",   "Bathroom",   "bathroom break 1"),
@@ -131,7 +128,7 @@ BACHELOR = AgentConfig(
         ("Bathroom",    "StudyRoom",  "back to work 4"),
         ("StudyRoom",   "Kitchen",    "coffee break 2"),
         ("Kitchen",     "StudyRoom",  "back to work 5"),
-        # Evening
+        # Вечер
         ("StudyRoom",   "Kitchen",    "cook dinner"),
         ("Kitchen",     "LivingRoom", "relax"),
         ("LivingRoom",  "MasterRoom", "bedtime"),
