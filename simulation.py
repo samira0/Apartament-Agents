@@ -1,21 +1,18 @@
 """
-simulation.py — Core simulation engine.
+Пайплайн:
+  1. Построение взвешенного графа NetworkX на основе словаря планировки помещений.
+  2. Преобразование целевых типов помещений в фактические идентификаторы узлов помещений (готовность к алгоритму Дейкстры).
+  3. Обработка ежедневного расписания каждого агента с помощью алгоритма Дейкстры для поиска кратчайшего пути.
+  4. Вычисление четырех необходимых метрик для каждого агента и каждой планировки помещений.
+  5. Для пары: обнаружение конфликтов одновременного доступа.
 
-Pipeline:
-  1. Build a NetworkX weighted graph from a floorplan dict.
-  2. Resolve room-type targets to actual room node IDs (Dijkstra-ready).
-  3. Run each agent's daily schedule through Dijkstra's shortest-path algorithm.
-  4. Compute the four required metrics per agent per floorplan.
-  5. For the couple: detect simultaneous-access conflicts.
-
-Friction Score formula (explicitly documented as required by the spec):
+Friction Score formula:
 
     friction = Σ_trips [ effective_path_cost(trip) ]
              + long_path_penalty
              + transition_penalty
              + conflict_penalty   (couple only)
 
-Where:
     effective_path_cost(trip) = raw_distance(trip) × agent.speed_factor
 
     long_path_penalty = Σ_trips [
@@ -33,19 +30,17 @@ import sys
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
-# add project root to path so we can import siblings
-sys.path.insert(0, "/home/claude/apartment_agents")
+sys.path.insert(0, "/home/apartment_agents")
 
 from agents import AgentConfig, CONFLICT_ROOMS, ROOM_TYPE_ALIASES
 
-# Weight applied to each simultaneous-room conflict event (for couple simulation)
 CONFLICT_PENALTY_WEIGHT = 3.0
 
 
-# ─── Graph utilities ──────────────────────────────────────────────────────────
+# Граф
 
 def build_graph(floorplan: dict) -> Dict[str, Dict[str, float]]:
-    """Return adjacency dict {node: {neighbour: distance, ...}, ...}."""
+    """Возвращает словарь смежности {node: {neighbour: distance, ...}, ...}."""
     graph: Dict[str, Dict[str, float]] = defaultdict(dict)
     for (u, v, dist) in floorplan["edges"]:
         graph[u][v] = dist
@@ -55,8 +50,8 @@ def build_graph(floorplan: dict) -> Dict[str, Dict[str, float]]:
 
 def dijkstra(graph: Dict, start: str, end: str) -> Tuple[float, List[str]]:
     """
-    Standard Dijkstra returning (total_distance, path_node_list).
-    Returns (inf, []) if no path exists.
+    Возвращение Стандарта Дейкстры (total_distance, path_node_list).
+    Возвращает (inf, []) если нет пути.
     """
     dist = {start: 0.0}
     prev: Dict[str, Optional[str]] = {start: None}
@@ -65,7 +60,6 @@ def dijkstra(graph: Dict, start: str, end: str) -> Tuple[float, List[str]]:
     while heap:
         d, u = heapq.heappop(heap)
         if u == end:
-            # Reconstruct path
             path = []
             node: Optional[str] = end
             while node is not None:
@@ -84,12 +78,12 @@ def dijkstra(graph: Dict, start: str, end: str) -> Tuple[float, List[str]]:
     return math.inf, []
 
 
-# ─── Room resolution ──────────────────────────────────────────────────────────
+# Комнаты
 
 def resolve_room(floorplan: dict, room_type: str) -> Optional[str]:
     """
-    Given a RPLAN room type (e.g. "Kitchen"), return the first matching
-    room node ID in the floorplan, or None.
+    Если задан тип помещения в RPLAN (e.g. "Kitchen"), возвращает первый 
+    соответствующий идентификатор узла помещения в плане или None.
     """
     for room_id, meta in floorplan["rooms"].items():
         if meta["type"] == room_type:
@@ -102,12 +96,10 @@ def resolve_schedule_step(
     from_type: str,
     to_type: str,
 ) -> Tuple[Optional[str], Optional[str]]:
-    """Map (from_type, to_type) → (from_node, to_node) in this floorplan."""
-    # Direct type match first
     src = resolve_room(floorplan, from_type)
     dst = resolve_room(floorplan, to_type)
 
-    # Fallback: if MasterRoom not found, try SecondRoom for bedroom trips
+    # Запасной вариант: если MasterRoom не найден, пробует SecondRoom для путей в спальню.
     if src is None:
         for alias_type in ["SecondRoom", "LivingRoom"]:
             if from_type == "MasterRoom":
@@ -121,7 +113,7 @@ def resolve_schedule_step(
                 if dst:
                     break
 
-    # StudyRoom fallback: remote worker in flat without study goes to bedroom
+    # Резервный вариант с учебной комнатой: удалённый работник в квартире без кабинета идёт в спальню.
     if src is None and from_type == "StudyRoom":
         src = resolve_room(floorplan, "SecondRoom") or resolve_room(floorplan, "MasterRoom")
     if dst is None and to_type == "StudyRoom":
@@ -130,7 +122,7 @@ def resolve_schedule_step(
     return src, dst
 
 
-# ─── Single-agent simulation ──────────────────────────────────────────────────
+# Симуляция с одним агентом
 
 def simulate_agent(
     floorplan: dict,
@@ -138,9 +130,9 @@ def simulate_agent(
     graph: Optional[Dict] = None,
 ) -> dict:
     """
-    Run one agent through their daily schedule on the given floorplan.
+    Прогоняет расписание одного агента за день по заданной планировке.
 
-    Returns a result dict with raw trip data and computed metrics.
+    Возвращает словарь результатов, содержащий исходные данные о путях и вычисленные метрики.
     """
     if graph is None:
         graph = build_graph(floorplan)
@@ -155,7 +147,6 @@ def simulate_agent(
         src, dst = resolve_schedule_step(floorplan, from_type, to_type)
 
         if src is None or dst is None:
-            # Room type not present in this floorplan — skip trip gracefully
             trips.append({
                 "label": label,
                 "from": from_type, "to": to_type,
@@ -192,13 +183,10 @@ def simulate_agent(
             n_unresolved += 1
             continue
 
-        # Number of room transitions = path length - 1
         n_transitions += len(path) - 1
 
-        # Effective cost = raw distance × speed factor
         eff_cost = raw_dist * agent.speed_factor
 
-        # Long-path penalty
         excess = max(0.0, raw_dist - agent.long_path_penalty_threshold)
         long_penalty = excess * agent.long_path_penalty_multiplier * agent.speed_factor
 
@@ -221,7 +209,6 @@ def simulate_agent(
     ok_trips = [t for t in trips if t["status"] == "ok"]
     n_ok = len(ok_trips)
 
-    # Transition penalty (per-transition add-on, e.g. for elderly)
     transition_penalty_total = n_transitions * agent.transition_penalty
     total_friction += transition_penalty_total
 
@@ -241,7 +228,7 @@ def simulate_agent(
     }
 
 
-# ─── Couple simulation (conflict detection) ───────────────────────────────────
+# Симуляция пары (обнаружение конфликтов)
 
 def simulate_couple(
     floorplan: dict,
@@ -249,18 +236,18 @@ def simulate_couple(
     agent_b: AgentConfig,
 ) -> dict:
     """
-    Simulate two agents simultaneously. Detects room access conflicts:
-    when both agents need the same single-occupancy room (Bathroom, Kitchen)
-    at the same schedule step, a conflict is recorded.
+    Имитирует одновременную работу двух агентов. Обнаруживает конфликты доступа к помещениям:
+    когда обоим агентам требуется одноместное помещение (ванная комната, кухня)
+    на одном и том же шаге планирования регистрируется конфликт.
 
-    Returns merged result with per-agent metrics + conflict count.
+    Возвращает объединенный результат с метриками для каждого агента + количество конфликтов.
     """
     graph = build_graph(floorplan)
 
     result_a = simulate_agent(floorplan, agent_a, graph)
     result_b = simulate_agent(floorplan, agent_b, graph)
 
-    # Detect conflicts: compare destinations step-by-step
+    # Выявление конфликтов: пошаговое сравнение пунктов назначения.
     n_conflicts = 0
     conflicts = []
     min_steps = min(len(result_a["trips"]), len(result_b["trips"]))
@@ -272,7 +259,7 @@ def simulate_couple(
         if trip_a["status"] != "ok" or trip_b["status"] != "ok":
             continue
 
-        # Both agents heading to same conflict room at same step?
+        # Оба агента направляются в одну комнату конфликта в один момент
         dst_a = trip_a["to"]
         dst_b = trip_b["to"]
 
@@ -291,7 +278,7 @@ def simulate_couple(
 
     conflict_penalty = n_conflicts * CONFLICT_PENALTY_WEIGHT
 
-    # Add conflict penalty to each partner's friction score
+    # Добавляем штраф за конфликт.
     result_a["metrics"]["conflict_penalty"] = round(conflict_penalty, 3)
     result_b["metrics"]["conflict_penalty"] = round(conflict_penalty, 3)
     result_a["metrics"]["friction_score"] = round(
@@ -310,12 +297,12 @@ def simulate_couple(
     }
 
 
-# ─── Full floorplan simulation ─────────────────────────────────────────────────
+#  Симуляция по полной планировке 
 
 def simulate_floorplan(floorplan_id: str, floorplan: dict) -> dict:
     """
-    Run all agents (elderly, couple A+B, bachelor) on one floorplan.
-    Returns structured results dict.
+    Обрабатывает всех агентов (пожилого, пару, холостяка) на одной планировке.
+    Возвращает структурированный словарь результатов.
     """
     from agents import ELDERLY, COUPLE_A, COUPLE_B, BACHELOR
 
@@ -335,5 +322,4 @@ def simulate_floorplan(floorplan_id: str, floorplan: dict) -> dict:
 
 
 def run_all(floorplans: dict) -> List[dict]:
-    """Simulate all floorplans and return list of results."""
     return [simulate_floorplan(fid, fp) for fid, fp in floorplans.items()]
