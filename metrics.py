@@ -1,10 +1,8 @@
 """
-metrics.py — Extract, aggregate and compare simulation metrics.
-
-Produces:
-  - per-agent per-floorplan metric tables
-  - aggregate "comfort score" (inverse of friction) for ranking
-  - helpers for DataFrame construction (used in the notebook)
+Создает:
+  - аблицы метрик для каждого агента и каждой планировки помещения
+  - агрегированный «показатель комфорта»
+  - вспомогательные функции для построения DataFrame 
 """
 
 import math
@@ -12,7 +10,7 @@ import pandas as pd
 from typing import List
 
 
-# ─── Extraction helpers ───────────────────────────────────────────────────────
+# Извлечение
 
 def extract_agent_row(floorplan_id: str, description: str, agent_label: str, metrics: dict) -> dict:
     return {
@@ -29,21 +27,21 @@ def extract_agent_row(floorplan_id: str, description: str, agent_label: str, met
 
 def results_to_dataframe(all_results: List[dict]) -> pd.DataFrame:
     """
-    Flatten all simulation results into a tidy DataFrame.
-    One row = one (floorplan × agent) combination.
+    Объединение всех результатов моделирования в DataFrame.
+    Строка = одна (планировка × агент) комбинация.
     """
     rows = []
     for res in all_results:
         fid  = res["floorplan_id"]
         desc = res["description"]
 
-        # Elderly
+        # Пожилой
         rows.append(extract_agent_row(
             fid, desc, "Elderly (70+)",
             res["elderly"]["metrics"]
         ))
 
-        # Couple — average the two partners
+        # Пара
         ma = res["couple"]["agent_a"]["metrics"]
         mb = res["couple"]["agent_b"]["metrics"]
         avg_metrics = {
@@ -55,7 +53,7 @@ def results_to_dataframe(all_results: List[dict]) -> pd.DataFrame:
         }
         rows.append(extract_agent_row(fid, desc, "Young Couple (avg)", avg_metrics))
 
-        # Bachelor
+        # Холостяк
         rows.append(extract_agent_row(
             fid, desc, "Remote-worker Bachelor",
             res["bachelor"]["metrics"]
@@ -68,10 +66,6 @@ def results_to_dataframe(all_results: List[dict]) -> pd.DataFrame:
 def add_comfort_score(df: pd.DataFrame) -> pd.DataFrame:
     """
     Comfort Score = 100 / (1 + normalised_friction)
-
-    Normalise friction within each agent group so scores are comparable
-    across agents with different absolute friction ranges.
-    Scores closer to 100 = more comfortable.
     """
     df = df.copy()
     df["comfort_score"] = 0.0
@@ -91,7 +85,7 @@ def add_comfort_score(df: pd.DataFrame) -> pd.DataFrame:
 
 def floorplan_ranking(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Average comfort score across all agents per floorplan → overall ranking.
+    Средний балл комфорта по всем агентам для каждой планировки → общий рейтинг.
     """
     ranking = (
         df.groupby(["floorplan", "description"])["comfort_score"]
@@ -101,6 +95,6 @@ def floorplan_ranking(df: pd.DataFrame) -> pd.DataFrame:
         .sort_values("avg_comfort_score", ascending=False)
         .reset_index(drop=True)
     )
-    ranking.index += 1  # rank from 1
+    ranking.index += 1
     ranking["avg_comfort_score"] = ranking["avg_comfort_score"].round(1)
     return ranking
