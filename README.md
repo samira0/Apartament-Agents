@@ -1,4 +1,4 @@
-# Apartament-Agents
+# Apartment-Agents
 
 **Proof of Concept** — генерация метрик удобства жилья через агентную симуляцию.
 
